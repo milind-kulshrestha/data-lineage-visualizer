@@ -3,6 +3,46 @@ from pyvis.network import Network
 import json
 import pandas as pd
 
+# Configurable hierarchy definition - easily extensible for Snowflake and future sources
+DEFAULT_HIERARCHY_CONFIG = {
+    'levels': [
+        {'name': 'model', 'id_field': 'model_name', 'display_field': 'model_name', 'group_by': None},
+        {'name': 'function', 'id_field': 'function_name', 'display_field': 'function_name', 'group_by': 'function_name'},
+        {'name': 'dataset', 'id_field': 'dataset_name', 'display_field': 'dataset_name', 'group_by': ['function_name', 'dataset_name']},
+        {'name': 'datapoint', 'id_field': 'datapoint_id', 'display_field': 'datapoint', 'group_by': ['function_name', 'dataset_name', 'datapoint_id']},
+        {'name': 'table', 'id_field': 'table_name', 'display_field': 'table_name', 'group_by': ['datapoint_id', 'table_name']}
+    ],
+    'relationships': [
+        {'parent': 'model', 'child': 'function', 'edge_type': 'model_to_function'},
+        {'parent': 'function', 'child': 'dataset', 'edge_type': 'function_to_dataset'},
+        {'parent': 'dataset', 'child': 'datapoint', 'edge_type': 'dataset_to_datapoint'},
+        {'parent': 'datapoint', 'child': 'table', 'edge_type': 'datapoint_to_table'}
+    ]
+}
+
+# Example extended hierarchy for Snowflake integration
+SNOWFLAKE_EXTENDED_HIERARCHY = {
+    'levels': [
+        {'name': 'model', 'id_field': 'model_name', 'display_field': 'model_name', 'group_by': None},
+        {'name': 'function', 'id_field': 'function_name', 'display_field': 'function_name', 'group_by': 'function_name'},
+        {'name': 'dataset', 'id_field': 'dataset_name', 'display_field': 'dataset_name', 'group_by': ['function_name', 'dataset_name']},
+        {'name': 'datapoint', 'id_field': 'datapoint_id', 'display_field': 'datapoint', 'group_by': ['function_name', 'dataset_name', 'datapoint_id']},
+        {'name': 'table', 'id_field': 'table_name', 'display_field': 'table_name', 'group_by': ['datapoint_id', 'table_name']},
+        {'name': 'column', 'id_field': 'column_name', 'display_field': 'column_name', 'group_by': ['table_name', 'column_name']},
+        {'name': 'downstream_table', 'id_field': 'downstream_table', 'display_field': 'downstream_table', 'group_by': ['column_name', 'downstream_table']},
+        {'name': 'downstream_column', 'id_field': 'downstream_column', 'display_field': 'downstream_column', 'group_by': ['downstream_table', 'downstream_column']}
+    ],
+    'relationships': [
+        {'parent': 'model', 'child': 'function', 'edge_type': 'model_to_function'},
+        {'parent': 'function', 'child': 'dataset', 'edge_type': 'function_to_dataset'},
+        {'parent': 'dataset', 'child': 'datapoint', 'edge_type': 'dataset_to_datapoint'},
+        {'parent': 'datapoint', 'child': 'table', 'edge_type': 'datapoint_to_table'},
+        {'parent': 'table', 'child': 'column', 'edge_type': 'table_to_column'},
+        {'parent': 'column', 'child': 'downstream_table', 'edge_type': 'column_to_downstream_table'},
+        {'parent': 'downstream_table', 'child': 'downstream_column', 'edge_type': 'downstream_table_to_downstream_column'}
+    ]
+}
+
 # Unified configuration for all graph elements
 GRAPH_CONFIG = {
     'nodes': {
@@ -44,8 +84,8 @@ GRAPH_CONFIG = {
                 'font': {'size': 11, 'color': '#000080'},
                 'widthConstraint': {'maximum': 150}
             },
-            'display': lambda data: data['display_name'].replace('_', ' ').title() + (f" ({data['source_suffix']})" if data.get('source_suffix') else ''),
-            'tooltip': lambda data: '\n'.join([f"{k.title().replace('_', ' ')}: {v}" for k, v in data.items() if k not in ['label', 'node_type', 'expandable', 'function_name', 'name', 'display_name', 'source_suffix', 'count'] and v is not None])
+            'display': lambda data: data['display_name'].replace('_', ' ').title(),
+            'tooltip': lambda data: '\n'.join([f"{k.title().replace('_', ' ')}: {v}" for k, v in data.items() if k not in ['label', 'node_type', 'expandable', 'function_name', 'name', 'display_name', 'function_context', 'count'] and v is not None])
         },
         'table': {
             'style': {
@@ -57,6 +97,39 @@ GRAPH_CONFIG = {
             },
             'display': lambda data: data['name'].split('.')[-1].replace('_VW', '').replace('_', ' ').title(),
             'tooltip': lambda data: f"Database: {data['name'].split('.')[0]}\nSchema: {data['name'].split('.')[1]}\nTable: {'.'.join(data['name'].split('.')[2:])}" if len(data['name'].split('.')) >= 3 else f"Table: {data['name']}"
+        },
+        'column': {
+            'style': {
+                'color': {'background': '#F0F8FF', 'border': '#E0E8EF'}, 
+                'size': 20, 
+                'shape': 'dot', 
+                'font': {'size': 10, 'color': '#000080'},
+                'widthConstraint': {'maximum': 120}
+            },
+            'display': lambda data: data['name'].replace('_', ' ').title(),
+            'tooltip': lambda data: f"Column: {data['name']}\nType: {data.get('data_type', 'Unknown')}"
+        },
+        'downstream_table': {
+            'style': {
+                'color': {'background': '#FFE4E1', 'border': '#EED4D1'}, 
+                'size': 30, 
+                'shape': 'database', 
+                'font': {'size': 12, 'color': '#8B0000', 'bold': True},
+                'widthConstraint': {'maximum': 180}
+            },
+            'display': lambda data: data['name'].split('.')[-1].replace('_VW', '').replace('_', ' ').title(),
+            'tooltip': lambda data: f"Downstream Table: {data['name']}"
+        },
+        'downstream_column': {
+            'style': {
+                'color': {'background': '#FFF0F5', 'border': '#EEE0E5'}, 
+                'size': 20, 
+                'shape': 'dot', 
+                'font': {'size': 10, 'color': '#8B0000'},
+                'widthConstraint': {'maximum': 120}
+            },
+            'display': lambda data: data['name'].replace('_', ' ').title(),
+            'tooltip': lambda data: f"Downstream Column: {data['name']}"
         }
     },
     'edges': {
@@ -80,6 +153,22 @@ GRAPH_CONFIG = {
             'display': lambda data: data.get('method', ''),
             'font': {'size': 10, 'color': '#333333'},
             'show_label': True
+        },
+        'table_to_column': {
+            'style': {'width': 1, 'color': '#999999'},
+            'display': lambda data: '',
+            'show_label': False
+        },
+        'column_to_downstream_table': {
+            'style': {'width': 2, 'color': '#CC6666'},
+            'display': lambda data: data.get('transformation', ''),
+            'font': {'size': 9, 'color': '#8B0000'},
+            'show_label': True
+        },
+        'downstream_table_to_downstream_column': {
+            'style': {'width': 1, 'color': '#AA5555'},
+            'display': lambda data: '',
+            'show_label': False
         },
         'default': {
             'style': {'width': 2, 'color': '#666666'},
@@ -167,6 +256,177 @@ class ExpandableNetworkGraph:
         
         return style
     
+    def _extract_field(self, source, field_name, default=None):
+        """Universal field extractor with null safety - works with DataFrames, Series, dicts, etc."""
+        if hasattr(source, 'columns') and field_name in source.columns:
+            # DataFrame/Series with columns
+            values = source[field_name].dropna()
+            return values.iloc[0] if not values.empty else default
+        elif hasattr(source, 'get'):
+            # Dict-like object
+            value = source.get(field_name, default)
+            return value if pd.notna(value) else default
+        elif hasattr(source, 'index') and field_name in source.index:
+            # Series with index
+            value = source[field_name]
+            return value if pd.notna(value) else default
+        return default
+    
+    def _generate_node_label(self, node_id, node_type, node_data, children_count=0):
+        """Universal label generator for all node types"""
+        if node_type == 'dataset':
+            return f"{node_data.get('display_name', node_id)} ({children_count} fields)"
+        elif node_type in ['table', 'downstream_table']:
+            return self._clean_table_label(node_data.get('display_name', node_id))
+        else:
+            return node_data.get('display_name', node_id)
+    
+    def _extract_metadata(self, node_type, base_data, source_group=None):
+        """Extract metadata based on node type from source data"""
+        metadata = {}
+        
+        if node_type == 'function' and source_group is not None:
+            func_def = self._extract_field(source_group, 'function_definition')
+            if func_def:
+                metadata['function_definition'] = func_def
+        
+        elif node_type == 'datapoint' and source_group is not None:
+            # Extract all relevant datapoint metadata
+            for col in ['dataset_name', 'function_definition', 'method', 'source_type']:
+                val = self._extract_field(source_group, col)
+                if val:
+                    metadata[col] = val
+        
+        return metadata
+    
+    def create_node_with_metadata(self, node_id, node_type, base_data, source_group=None, children=None):
+        """Unified node creation with automatic metadata extraction"""
+        # Extract metadata based on node type and source data
+        metadata = self._extract_metadata(node_type, base_data, source_group)
+        
+        # Merge base data with extracted metadata
+        node_data = {**base_data, **metadata}
+        
+        # Process children if provided - children should already be properly formatted
+        self.add_node(node_id, node_data, node_type, children)
+    
+    
+    def _clean_table_label(self, table_name):
+        """Create clean table labels for display"""
+        if pd.isna(table_name):
+            return str(table_name)
+        
+        table_parts = str(table_name).split('.')
+        if len(table_parts) >= 3:
+            return table_parts[-1].replace('_VW', '').replace('_', ' ').title()
+        else:
+            return str(table_name).replace('_VW', '').replace('_', ' ').title()
+    
+    def build_hierarchy_structure(self, df_sources, hierarchy_config):
+        """Generic hierarchy builder that works with any hierarchy configuration"""
+        structure = {}
+        
+        # Build nested structure by grouping according to hierarchy levels
+        for _, row in df_sources.iterrows():
+            current_level = structure
+            path = []
+            
+            # Navigate through each level of the hierarchy
+            for level_config in hierarchy_config['levels']:
+                field_name = level_config['id_field']
+                node_type = level_config['name']
+                
+                # Get the value for this level
+                if field_name == 'model_name':
+                    # Model is handled separately, skip in structure building
+                    continue
+                elif field_name in row.index and pd.notna(row[field_name]):
+                    node_id = row[field_name]
+                else:
+                    break  # Stop if we don't have data for this level
+                
+                path.append(node_id)
+                
+                # Create node if it doesn't exist
+                if node_id not in current_level:
+                    current_level[node_id] = {
+                        'node_type': node_type,
+                        'data': {},
+                        'children': {},
+                        'level_config': level_config
+                    }
+                
+                # Update node data with row information
+                display_field = level_config.get('display_field', field_name)
+                if display_field in row.index:
+                    current_level[node_id]['data'].update({
+                        'name': node_id,
+                        'display_name': row[display_field] if pd.notna(row[display_field]) else node_id,
+                        **{k: v for k, v in row.items() if pd.notna(v)}
+                    })
+                
+                # Move to next level
+                current_level = current_level[node_id]['children']
+        
+        return structure
+    
+    def _build_node_children(self, children_info):
+        """Universal children structure builder - handles any level of nesting"""
+        children_dict = {}
+        
+        for child_id, child_info in children_info.items():
+            child_type = child_info.get('node_type', 'unknown')
+            child_data = child_info.get('data', {})
+            child_children = child_info.get('children', {})
+            child_count = len(child_children)
+            
+            # Use unified label generator
+            label = self._generate_node_label(child_id, child_type, child_data, child_count)
+            
+            children_dict[child_id] = {
+                'label': label,
+                'node_type': child_type,
+                'expandable': bool(child_children),
+                'auto_expand': child_info.get('auto_expand', child_type == 'table')
+            }
+            
+            # Recursively handle nested children
+            if child_children:
+                self.hidden_nodes[child_id] = self._build_node_children(child_children)
+        
+        return children_dict
+
+    def create_hierarchy_nodes(self, structure, hierarchy_config, parent_id=None, parent_type=None):
+        """Recursively create nodes from hierarchy structure"""
+        for node_id, node_info in structure.items():
+            node_type = node_info['node_type']
+            node_data = node_info['data']
+            children = node_info['children']
+            
+            # Build children using unified method
+            children_dict = self._build_node_children(children) if children else {}
+            
+            # Create the node
+            self.create_node_with_metadata(node_id, node_type, node_data, None, children_dict)
+            
+            # Create edge to parent if exists
+            if parent_id and parent_type:
+                edge_type = self._get_edge_type(parent_type, node_type, hierarchy_config)
+                if edge_type:
+                    self.add_edge(parent_id, node_id, edge_type)
+            
+            # Recursively create children
+            if children:
+                self.create_hierarchy_nodes(children, hierarchy_config, node_id, node_type)
+    
+    
+    def _get_edge_type(self, parent_type, child_type, hierarchy_config):
+        """Get edge type from hierarchy configuration"""
+        for relationship in hierarchy_config.get('relationships', []):
+            if relationship['parent'] == parent_type and relationship['child'] == child_type:
+                return relationship['edge_type']
+        return 'default'
+    
     def build_initial_graph(self):
         visible_nodes = {node_id for node_id in self.G.nodes() 
                         if self.G.nodes[node_id].get('node_type') in ['model', 'function']}
@@ -183,6 +443,19 @@ class ExpandableNetworkGraph:
                 edge_props = self._get_edge_props(edge_type, edge_data)
                 self.net.add_edge(source, target, **edge_props)
     
+    def _get_layout_config(self, node_type):
+        """Get layout configuration for different node types"""
+        layout_configs = {
+            'dataset': {'xSpacing': 400, 'yOffset': 220},
+            'datapoint': {'xSpacing': 180, 'yOffset': 180},
+            'table': {'xSpacing': 200, 'yOffset': 180},
+            'column': {'xSpacing': 150, 'yOffset': 160},
+            'downstream_table': {'xSpacing': 220, 'yOffset': 200},
+            'downstream_column': {'xSpacing': 140, 'yOffset': 160},
+            'default': {'xSpacing': 250, 'yOffset': 180}
+        }
+        return layout_configs.get(node_type, layout_configs['default'])
+
     def generate_javascript_handlers(self):
         hidden_nodes_json = {}
         for parent, children in self.hidden_nodes.items():
@@ -231,20 +504,19 @@ class ExpandableNetworkGraph:
                 for (const [childId, childData] of Object.entries(children)) {{
                     if (!existingNodes.has(childId)) {{
                         const style = nodeStyles[childData.node_type] || {{}};
-                        // Position children with better spacing based on node type
-                        let xSpacing = 250; // Default spacing
-                        let yOffset = 180;  // Default vertical offset
-                        
-                        if (childData.node_type === 'dataset') {{
-                            xSpacing = 400;
-                            yOffset = 220;
-                        }} else if (childData.node_type === 'datapoint') {{
-                            xSpacing = 180;
-                            yOffset = 180;
-                        }} else if (childData.node_type === 'table') {{
-                            xSpacing = 200;
-                            yOffset = 180;
-                        }}
+                        // Get layout config for this node type (extensible for new types)
+                        const layoutConfigs = {{
+                            'dataset': {{xSpacing: 400, yOffset: 220}},
+                            'datapoint': {{xSpacing: 180, yOffset: 180}},
+                            'table': {{xSpacing: 200, yOffset: 180}},
+                            'column': {{xSpacing: 150, yOffset: 160}},
+                            'downstream_table': {{xSpacing: 220, yOffset: 200}},
+                            'downstream_column': {{xSpacing: 140, yOffset: 160}},
+                            'default': {{xSpacing: 250, yOffset: 180}}
+                        }};
+                        const layout = layoutConfigs[childData.node_type] || layoutConfigs['default'];
+                        const xSpacing = layout.xSpacing;
+                        const yOffset = layout.yOffset;
                         
                         // Special layout for datapoints to avoid overcrowding
                         let xPos, yPos;
@@ -372,168 +644,65 @@ class ExpandableNetworkGraph:
         
         return filename
 
-def build_model_graph_expandable_final(model_name, df_sources, output_file="model_lineage_expandable.html"):
+def build_expandable_hierarchy_graph(root_name, df_sources, hierarchy_config=None, output_file="lineage_graph.html"):
+    """
+    Extensible hierarchy graph builder - works with any hierarchy configuration.
+    
+    Args:
+        root_name: Name of the root node (e.g., model name)
+        df_sources: DataFrame with lineage data
+        hierarchy_config: Hierarchy configuration dict (uses DEFAULT_HIERARCHY_CONFIG if None)
+        output_file: Output HTML file name
+    
+    Returns:
+        ExpandableNetworkGraph instance
+    """
+    if hierarchy_config is None:
+        hierarchy_config = DEFAULT_HIERARCHY_CONFIG
+    
     graph = ExpandableNetworkGraph(height="1200px", width="100%")
-    graph.add_node(model_name, {'name': model_name}, 'model')
+    
+    # Create root node
+    graph.add_node(root_name, {'name': root_name}, 'model')
     
     if df_sources.empty:
         return graph
     
-    has_source_info = 'source_instance' in df_sources.columns and not df_sources['source_instance'].isna().all()
-    df_sources['datapoint_id'] = df_sources.apply(
-        lambda row: f"{row['datapoint']}_{row['source_instance']}" if has_source_info and pd.notna(row['source_instance']) else row['datapoint'], 
-        axis=1
-    )
+    # Prepare data for hierarchy building
+    df_prepared = df_sources.copy()
     
-    # Create dataset groups using dataset_name column
-    dataset_groups = {}
-    datapoint_to_tables = {}
+    # Add model_name and ensure datapoint_id exists
+    df_prepared['model_name'] = root_name
+    if 'datapoint_id' not in df_prepared.columns:
+        df_prepared['datapoint_id'] = df_prepared.apply(
+            lambda row: f"{row['datapoint']}__{row['function_name']}" if pd.notna(row.get('function_name')) else row['datapoint'], 
+            axis=1
+        )
     
-    for dp_id, group in df_sources.groupby("datapoint_id"):
-        tables = group['table_name'].dropna().unique().tolist()
-        # Get method information for this datapoint
-        method_info = group['method'].dropna().iloc[0] if 'method' in group.columns and not group['method'].dropna().empty else None
-        # Get additional properties
-        dataset_name = group['dataset_name'].dropna().iloc[0] if 'dataset_name' in group.columns and not group['dataset_name'].dropna().empty else None
-        function_def = group['function_def'].dropna().iloc[0] if 'function_def' in group.columns and not group['function_def'].dropna().empty else None
-        
-        datapoint_to_tables[dp_id] = {
-            'tables': tables,
-            'display_name': group['datapoint'].iloc[0],
-            'method': method_info,
-            'dataset_name': dataset_name,
-            'function_def': function_def
-        }
-        
-        # Group datapoints by their dataset_name (use as-is from df_sample)
-        if dataset_name and pd.notna(dataset_name):
-            if dataset_name not in dataset_groups:
-                dataset_groups[dataset_name] = []
-            dataset_groups[dataset_name].append(dp_id)
+    # Build hierarchical structure
+    structure = graph.build_hierarchy_structure(df_prepared, hierarchy_config)
     
-    functions_data = {}
-    functions_metadata = {}
-    for func_name, group in df_sources.groupby("function_name"):
-        if pd.notna(func_name):
-            dp_ids = group['datapoint_id'].unique()
-            functions_data[func_name] = {dp_id: group[group['datapoint_id'] == dp_id]['datapoint'].iloc[0] for dp_id in dp_ids}
-            # Store function metadata
-            func_def = group['function_def'].dropna().iloc[0] if 'function_def' in group.columns and not group['function_def'].dropna().empty else None
-            functions_metadata[func_name] = {'function_definition': func_def}
+    # Create all nodes and relationships
+    graph.create_hierarchy_nodes(structure, hierarchy_config, root_name, 'model')
     
-    
-    # Create function nodes with dataset groups
-    for func_name, datapoints in functions_data.items():
-        # Group datapoints by their dataset_name
-        func_dataset_groups = {}
-        for dp_id, dp_name in datapoints.items():
-            dp_data = datapoint_to_tables.get(dp_id, {})
-            dataset_name = dp_data.get('dataset_name')
-            if dataset_name:
-                if dataset_name not in func_dataset_groups:
-                    func_dataset_groups[dataset_name] = []
-                source_info = f" ({dp_id.split('_', 1)[1]})" if '_' in dp_id and has_source_info else ""
-                func_dataset_groups[dataset_name].append({'id': dp_id, 'label': dp_name + source_info})
-        
-        # Create children structure with dataset groups
-        group_children = {}
-        for dataset_name, datapoints_list in func_dataset_groups.items():
-            # Use dataset name as-is from df_sample
-            group_children[f"{func_name}_{dataset_name}"] = {
-                'label': f"{dataset_name} ({len(datapoints_list)} fields)", 
-                'node_type': 'dataset', 
-                'expandable': True
-            }
-        
-        # Add function metadata as node properties
-        func_data = {'name': func_name, 'function_name': func_name}
-        if func_name in functions_metadata and functions_metadata[func_name].get('function_definition'):
-            func_data['function_definition'] = functions_metadata[func_name]['function_definition']
-            
-        graph.add_node(func_name, func_data, 'function', group_children)
-        graph.add_edge(model_name, func_name, 'model_to_function')
-    
-    # Add dataset group nodes with their datapoints
-    for func_name, datapoints in functions_data.items():
-        func_dataset_groups = {}
-        for dp_id, dp_name in datapoints.items():
-            dp_data = datapoint_to_tables.get(dp_id, {})
-            dataset_name = dp_data.get('dataset_name')
-            if dataset_name:
-                if dataset_name not in func_dataset_groups:
-                    func_dataset_groups[dataset_name] = []
-                source_info = f" ({dp_id.split('_', 1)[1]})" if '_' in dp_id and has_source_info else ""
-                func_dataset_groups[dataset_name].append({'id': dp_id, 'label': dp_name + source_info})
-        
-        for dataset_name, datapoints_list in func_dataset_groups.items():
-            group_id = f"{func_name}_{dataset_name}"
-            datapoint_children = {}
-            for dp_info in datapoints_list:
-                dp_id = dp_info['id']
-                datapoint_children[dp_id] = {'label': dp_info['label'], 'node_type': 'datapoint', 'expandable': True}
-            
-            # Use dataset name as-is from df_sample
-            dataset_data = {'name': dataset_name, 'count': len(datapoints_list)}
-            graph.add_node(group_id, dataset_data, 'dataset', datapoint_children)
-            graph.add_edge(func_name, group_id, 'function_to_dataset')
-    
-    # Create datapoint nodes that connect directly to tables
-    for dp_id, dp_data in datapoint_to_tables.items():
-        table_children = {}
-        for table in dp_data['tables']:
-            if pd.notna(table):
-                # Create cleaner table labels
-                table_parts = table.split('.')
-                if len(table_parts) >= 3:
-                    clean_label = table_parts[-1].replace('_VW', '').replace('_', ' ').title()
-                else:
-                    clean_label = table.replace('_VW', '').replace('_', ' ').title()
-                table_children[table] = {'label': clean_label, 'node_type': 'table', 'auto_expand': True}
-        
-        # Prepare datapoint data
-        source_suffix = dp_id.split('_', 1)[1] if '_' in dp_id and has_source_info else None
-        datapoint_data = {
-            'name': dp_id,
-            'display_name': dp_data['display_name'],
-            'source_suffix': source_suffix
-        }
-        
-        # Add additional properties to datapoint nodes
-        if dp_data.get('dataset_name'):
-            datapoint_data['dataset_name'] = dp_data['dataset_name']
-        if dp_data.get('function_def'):
-            datapoint_data['function_definition'] = dp_data['function_def']
-            
-        graph.add_node(dp_id, datapoint_data, 'datapoint', table_children)
-    
-    # Connect dataset groups to their datapoints
-    for func_name, datapoints in functions_data.items():
-        for dp_id in datapoints:
-            # Find which dataset group this datapoint belongs to
-            dp_data = datapoint_to_tables.get(dp_id, {})
-            dataset_name = dp_data.get('dataset_name')
-            if dataset_name:
-                group_id = f"{func_name}_{dataset_name}"
-                graph.add_edge(group_id, dp_id, 'dataset_to_datapoint')
-    
-    # Connect datapoints directly to tables (no dataset layer)
-    for dp_id, dp_data in datapoint_to_tables.items():
-        for table in dp_data['tables']:
-            if pd.notna(table):
-                # Add method as edge property if available
-                edge_props = {}
-                if dp_data.get('method'):
-                    edge_props['method'] = dp_data['method']
-                graph.add_edge(dp_id, table, 'datapoint_to_table', **edge_props)
-                
-                # Add table nodes (no children since tables are leaf nodes) - only if not already added
-                if table not in graph.G.nodes:
-                    table_data = {'name': table}
-                    graph.add_node(table, table_data, 'table')
-    
+    # Save and return
     graph.save_graph(output_file)
-    
     return graph
+
+
+def build_model_graph_expandable_final(model_name, df_sources, output_file="model_lineage_expandable.html"):
+    """
+    Backward compatibility wrapper - uses the new extensible hierarchy system.
+    
+    This function maintains the same interface as before but now uses the configurable
+    hierarchy system internally, making it future-proof and extensible.
+    """
+    return build_expandable_hierarchy_graph(
+        root_name=model_name,
+        df_sources=df_sources,
+        hierarchy_config=DEFAULT_HIERARCHY_CONFIG,
+        output_file=output_file
+    )
 
 def main():
     try:

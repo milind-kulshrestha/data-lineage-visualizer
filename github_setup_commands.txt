@@ -1,0 +1,13 @@
+# Commands to run after creating GitHub repository
+# Replace YOUR_USERNAME with your actual GitHub username
+
+# Add the remote origin (use the URL from your new GitHub repo)
+git remote add origin https://github.com/YOUR_USERNAME/data-lineage-visualizer.git
+
+# Push your code to GitHub
+git branch -M main
+git push -u origin main
+
+# Alternative if you prefer SSH (requires SSH key setup)
+# git remote add origin git@github.com:YOUR_USERNAME/data-lineage-visualizer.git
+# git push -u origin main
