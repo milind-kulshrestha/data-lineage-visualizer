@@ -323,7 +323,7 @@ class ExpandableNetworkGraph:
             return str(table_name).replace('_VW', '').replace('_', ' ').title()
     
     def build_hierarchy_structure(self, df_sources, hierarchy_config):
-        """Generic hierarchy builder that works with any hierarchy configuration"""
+        """Generic hierarchy builder that creates separate instances for cleaner hierarchy"""
         structure = {}
         
         # Build nested structure by grouping according to hierarchy levels
@@ -342,6 +342,13 @@ class ExpandableNetworkGraph:
                     continue
                 elif field_name in row.index and pd.notna(row[field_name]):
                     node_id = row[field_name]
+                    
+                    # Create function-specific dataset IDs to avoid sharing
+                    # This ensures each function gets its own dataset instance
+                    if node_type == 'dataset' and len(path) > 0:
+                        # Prefix dataset with function name for uniqueness
+                        function_name = path[0]  # First item in path is function name
+                        node_id = f"{function_name}_{node_id}"
                 else:
                     break  # Stop if we don't have data for this level
                 
@@ -359,9 +366,15 @@ class ExpandableNetworkGraph:
                 # Update node data with row information
                 display_field = level_config.get('display_field', field_name)
                 if display_field in row.index:
+                    # For renamed dataset nodes, keep original name for display
+                    display_name = row[display_field] if pd.notna(row[display_field]) else node_id
+                    if node_type == 'dataset' and '_' in node_id:
+                        # Extract original dataset name for display (remove function prefix)
+                        display_name = node_id.split('_', 1)[1]
+                    
                     current_level[node_id]['data'].update({
                         'name': node_id,
-                        'display_name': row[display_field] if pd.notna(row[display_field]) else node_id,
+                        'display_name': display_name,
                         **{k: v for k, v in row.items() if pd.notna(v)}
                     })
                 
